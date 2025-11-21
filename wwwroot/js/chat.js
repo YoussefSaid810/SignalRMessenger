@@ -4,7 +4,16 @@ const connection = new signalR.HubConnectionBuilder()
     .withUrl("/chatHub")
     .withAutomaticReconnect()
     .build();
-
+async function start() {
+    try {
+        await connection.start();
+        console.log("Connected to chatHub");
+    } catch (err) {
+        console.error(err);
+        setTimeout(start, 2000);
+    }
+}
+start();
 let myUsername = null;
 let selectedUser = null;
 
@@ -24,6 +33,18 @@ const lastOutgoingStatusSpan = {};
 // conversationMeta["public"] = { preview, time }
 // conversationMeta["user:ahmed"] = { preview, time }
 const conversationMeta = {};
+
+
+
+let pendingFile = null;
+let pendingFilePreviewUrl = null;
+
+
+const attachmentPreview = document.getElementById('attachmentPreview');
+const attachmentPreviewThumb = document.getElementById('attachmentPreviewThumb');
+const attachmentPreviewName = document.getElementById('attachmentPreviewName');
+const attachmentPreviewSize = document.getElementById('attachmentPreviewSize');
+const btnRemoveAttachment = document.getElementById('btnRemoveAttachment');
 
 
 // ========== Helpers ==========
@@ -68,17 +89,34 @@ function formatTimeShort(isoDate) {
 }
 
 // Update preview + time for a conversation
-function updateConversationMeta(key, body, isoDate) {
-    if (!body) return;
 
-    const trimmed = body.length > 30 ? body.slice(0, 30) + "…" : body;
-    conversationMeta[key] = {
-        preview: trimmed,
-        time: formatTimeShort(isoDate)   
-    };
 
-    renderUsers(currentUsers);
-}
+fileInput?.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (!myUsername) {
+        alert('Set your name first');
+        fileInput.value = "";
+        return;
+    }
+
+    // Simple size limit check (e.g., 10 MB)
+    const maxBytes = 10 * 1024 * 1024;
+    if (file.size > maxBytes) {
+        alert('File is too large (max 10 MB).');
+        fileInput.value = "";
+        return;
+    }
+
+    showAttachmentPreview(file);
+});
+
+btnRemoveAttachment?.addEventListener('click', () => {
+    fileInput.value = "";
+    clearAttachmentPreview();
+});
+
 
 function escapeHtml(unsafe) {
     if (!unsafe) return '';
@@ -111,18 +149,51 @@ function addMessageBubble(from, to, body, isoDate) {
     const bubble = document.createElement('div');
     bubble.classList.add('message-bubble');
 
-    const textDiv = document.createElement('div');
-    textDiv.textContent = body;
-    bubble.appendChild(textDiv);
+    const fileInfo = parseFileMessage(body);
+
+    if (fileInfo) {
+        const isImage = fileInfo.contentType.startsWith("image/");
+
+        if (isImage) {
+            const img = document.createElement('img');
+            img.src = fileInfo.url;
+            img.alt = fileInfo.name;
+            img.style.maxWidth = "220px";
+            img.style.borderRadius = "12px";
+            img.style.display = "block";
+            img.style.marginBottom = "4px";
+            bubble.appendChild(img);
+        } else {
+            const link = document.createElement('a');
+            link.href = fileInfo.url;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = `📎 ${fileInfo.name}`;
+            link.style.wordBreak = "break-all";
+            bubble.appendChild(link);
+        }
+
+        if (fileInfo.caption) {
+            const cap = document.createElement('div');
+            cap.textContent = fileInfo.caption;
+            cap.style.marginTop = "4px";
+            cap.style.fontSize = "13px";
+            bubble.appendChild(cap);
+        }
+    } else {
+        // Normal text-only message
+        const textDiv = document.createElement('div');
+        textDiv.textContent = body;
+        bubble.appendChild(textDiv);
+    }
 
     const meta = document.createElement('div');
     meta.classList.add('message-meta');
 
-    const dt = formatTimePretty(isoDate); // using the pretty formatter
+    const dt = formatTimePretty(isoDate);
 
     let label;
     if (to) {
-        // private
         if (isYou) {
             label = `You ➜ ${to}`;
         } else if (to === myUsername) {
@@ -131,20 +202,17 @@ function addMessageBubble(from, to, body, isoDate) {
             label = `${from} ➜ ${to}`;
         }
     } else {
-        // public
         label = from;
     }
 
     meta.textContent = dt ? `${label} • ${dt}` : label;
 
-    // ✅ add delivery indicator for *outgoing private* messages
     if (isYou && to) {
         const statusSpan = document.createElement('span');
         statusSpan.classList.add('delivery-indicator');
         statusSpan.textContent = ' ✓✓ Delivered';
         meta.appendChild(statusSpan);
 
-        // conversation key = "user:otherUser"
         const key = 'user:' + to;
         lastOutgoingStatusSpan[key] = statusSpan;
     }
@@ -154,7 +222,6 @@ function addMessageBubble(from, to, body, isoDate) {
     messagesListEl.appendChild(row);
     messagesListEl.scrollTop = messagesListEl.scrollHeight;
 }
-
 // typing indicator text
 function showTyping(text) {
     if (!typingIndicator) return;
@@ -300,6 +367,81 @@ async function notifySeen(otherUser) {
         console.error('Error sending seen notification:', err);
     }
 }
+function isFileMessage(body) {
+    return body && body.startsWith("file:");
+}
+
+function parseFileMessage(body) {
+    // body format: file:<url>|<originalName>|<contentType>|<caption?>
+    if (!isFileMessage(body)) return null;
+    const payload = body.substring(5);
+    const parts = payload.split("|");
+    return {
+        url: parts[0],
+        name: parts[1] || "file",
+        contentType: parts[2] || "",
+        caption: parts[3] ? parts[3] : ""
+    };
+}
+function formatBytes(bytes) {
+    if (!bytes) return "";
+    const kb = bytes / 1024;
+    if (kb < 1024) return kb.toFixed(1) + " KB";
+    const mb = kb / 1024;
+    return mb.toFixed(2) + " MB";
+}
+
+function showAttachmentPreview(file) {
+    if (!attachmentPreview) return;
+    if (pendingFilePreviewUrl) {
+        URL.revokeObjectURL(pendingFilePreviewUrl);
+    }
+
+    pendingFile = file;
+    pendingFilePreviewUrl = URL.createObjectURL(file);
+
+    const isImage = file.type.startsWith("image/");
+
+    attachmentPreviewThumb.innerHTML = "";
+    if (isImage) {
+        const img = document.createElement("img");
+        img.src = pendingFilePreviewUrl;
+        attachmentPreviewThumb.appendChild(img);
+    } else {
+        attachmentPreviewThumb.textContent = "📎";
+    }
+
+    attachmentPreviewName.textContent = file.name;
+    attachmentPreviewSize.textContent = formatBytes(file.size);
+
+    attachmentPreview.style.display = "block";
+}
+
+function clearAttachmentPreview() {
+    if (!attachmentPreview) return;
+    if (pendingFilePreviewUrl) {
+        URL.revokeObjectURL(pendingFilePreviewUrl);
+        pendingFilePreviewUrl = null;
+    }
+    pendingFile = null;
+    attachmentPreview.style.display = "none";
+}
+
+async function uploadFile(file) {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const resp = await fetch('/Home/Upload', {
+        method: 'POST',
+        body: formData
+    });
+
+    if (!resp.ok) {
+        throw new Error(`Upload failed with status ${resp.status}`);
+    }
+
+    return await resp.json(); // {url, originalName, contentType}
+}
 
 
 // ========== SignalR handlers ==========
@@ -397,17 +539,18 @@ document.getElementById('btnRegister')?.addEventListener('click', async () => {
         alert('Enter a name');
         return;
     }
+
     try {
         await connection.invoke('Register', name);
     } catch (err) {
         console.error('Error registering user:', err);
+        alert('Could not register. Check console for details.');
     }
 });
 
 // Send message (public or private)
 document.getElementById('btnSend')?.addEventListener('click', async () => {
-    const msg = messageInput.value.trim();
-    if (!msg) return;
+    const text = messageInput.value.trim();
 
     if (!myUsername) {
         alert('Set your name first');
@@ -415,12 +558,36 @@ document.getElementById('btnSend')?.addEventListener('click', async () => {
     }
 
     try {
-        if (selectedUser) {
-            await connection.invoke('SendPrivateMessage', myUsername, selectedUser, msg);
+        if (pendingFile) {
+            // file + optional caption
+            const data = await uploadFile(pendingFile);
+
+            // Avoid '|' breaking our format
+            const safeCaption = text.replaceAll('|', '/');
+
+            const body = `file:${data.url}|${data.originalName}|${data.contentType}|${safeCaption}`;
+
+            if (selectedUser) {
+                await connection.invoke('SendPrivateMessage', myUsername, selectedUser, body);
+            } else {
+                await connection.invoke('SendPublicMessage', myUsername, body);
+            }
+
+            messageInput.value = '';
+            fileInput.value = '';
+            clearAttachmentPreview();
         } else {
-            await connection.invoke('SendPublicMessage', myUsername, msg);
+            // text-only message
+            if (!text) return;
+
+            if (selectedUser) {
+                await connection.invoke('SendPrivateMessage', myUsername, selectedUser, text);
+            } else {
+                await connection.invoke('SendPublicMessage', myUsername, text);
+            }
+
+            messageInput.value = '';
         }
-        messageInput.value = '';
     } catch (err) {
         console.error('Error sending message:', err);
     }
@@ -433,8 +600,7 @@ document.getElementById('btnSendPrivate')?.addEventListener('click', async () =>
         return;
     }
 
-    const msg = messageInput.value.trim();
-    if (!msg) return;
+    const text = messageInput.value.trim();
 
     if (!myUsername) {
         alert('Set your name first');
@@ -442,8 +608,21 @@ document.getElementById('btnSendPrivate')?.addEventListener('click', async () =>
     }
 
     try {
-        await connection.invoke('SendPrivateMessage', myUsername, selectedUser, msg);
-        messageInput.value = '';
+        if (pendingFile) {
+            const data = await uploadFile(pendingFile);
+            const safeCaption = text.replaceAll('|', '/');
+            const body = `file:${data.url}|${data.originalName}|${data.contentType}|${safeCaption}`;
+
+            await connection.invoke('SendPrivateMessage', myUsername, selectedUser, body);
+
+            messageInput.value = '';
+            fileInput.value = '';
+            clearAttachmentPreview();
+        } else {
+            if (!text) return;
+            await connection.invoke('SendPrivateMessage', myUsername, selectedUser, text);
+            messageInput.value = '';
+        }
     } catch (err) {
         console.error('Error sending private message:', err);
     }
@@ -462,3 +641,12 @@ messageInput?.addEventListener('input', async () => {
         console.error('Error sending typing event:', err);
     }
 });
+
+btnAttach?.addEventListener('click', () => {
+    if (!myUsername) {
+        alert('Set your name first');
+        return;
+    }
+    fileInput?.click();
+});
+

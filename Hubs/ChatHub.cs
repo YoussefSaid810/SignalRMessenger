@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using SignalRMessenger.Data;
@@ -53,7 +53,7 @@ namespace SignalRMessenger.Hubs
                     }
                 }
 
-                // ?? Always send updated list after any disconnect
+                // 🔥 Always send updated list after any disconnect
                 await BroadcastUserList();
             }
 
@@ -76,9 +76,11 @@ namespace SignalRMessenger.Hubs
             // notify others someone joined
             await Clients.Others.SendAsync("UserJoined", username);
 
-            // ?? send full list to everyone
-            await BroadcastUserList();
+            // send full list to everyone
+            var users = _users.Keys.OrderBy(u => u).ToList();
+            await Clients.All.SendAsync("UserList", users);
         }
+
 
         // -------- public message --------
         public async Task SendPublicMessage(string user, string message)
