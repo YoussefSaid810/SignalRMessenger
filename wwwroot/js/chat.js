@@ -10,6 +10,9 @@ const usersListEl = document.getElementById('usersList');
 const messagesListEl = document.getElementById('messagesList');
 const chatTitle = document.getElementById('chatTitle');
 const currentUserLabel = document.getElementById('currentUserLabel');
+const typingIndicator = document.getElementById('typingIndicator');
+let typingTimeoutId = null;
+
 
 function addMessageHtml(html) {
     const div = document.createElement('div');
@@ -49,6 +52,36 @@ connection.on("Registered", (username) => {
     myUsername = username;
     currentUserLabel.textContent = `You: ${username}`;
 });
+
+connection.on("UserTyping", (fromUser, toUser) => {
+    // Show only if it's relevant to the CURRENT chat
+    if (!typingIndicator) return;
+
+    // public chat typing (toUser == null)
+    if (!toUser && selectedUser === null) {
+        showTyping(`${fromUser} is typing...`);
+    }
+
+    // private chat typing
+    if (toUser && selectedUser === fromUser) {
+        showTyping(`${fromUser} is typing...`);
+    }
+});
+
+function showTyping(text) {
+    typingIndicator.textContent = text;
+
+    // clear previous timeout
+    if (typingTimeoutId) {
+        clearTimeout(typingTimeoutId);
+    }
+
+    // hide after 2 seconds of no new typing events
+    typingTimeoutId = setTimeout(() => {
+        typingIndicator.textContent = "";
+    }, 2000);
+}
+
 
 async function start() {
     try {
@@ -152,3 +185,23 @@ async function loadHistory(withUser) {
         console.error('Failed to load history', err);
     }
 }
+
+// --- Typing indicator sender ---
+
+const messageInput = document.getElementById('messageInput');
+let lastTypingSentAt = 0;
+
+messageInput?.addEventListener('input', async () => {
+    const now = Date.now();
+    // throttle to once every 700ms to avoid spamming the hub
+    if (now - lastTypingSentAt < 700) return;
+    lastTypingSentAt = now;
+
+    try {
+        const toUser = selectedUser; // null => public chat
+        await connection.invoke('Typing', toUser);
+    } catch (err) {
+        console.error('Error sending typing event:', err);
+    }
+});
+

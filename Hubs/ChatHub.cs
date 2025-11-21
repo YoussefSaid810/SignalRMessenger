@@ -155,4 +155,31 @@ public class ChatHub : Hub
             return msgs;
         }
     }
+    public async Task Typing(string? toUser)
+    {
+        // who is typing?
+        _connections.TryGetValue(Context.ConnectionId, out var fromUser);
+        if (string.IsNullOrWhiteSpace(fromUser))
+            return;
+
+        // null/empty => public chat
+        if (string.IsNullOrWhiteSpace(toUser))
+        {
+            // notify everyone except the typer
+            await Clients.Others.SendAsync("UserTyping", fromUser, null);
+        }
+        else
+        {
+            // private typing notification only to the target user
+            if (_users.TryGetValue(toUser, out var connections))
+            {
+                foreach (var connId in connections)
+                {
+                    await Clients.Client(connId)
+                                 .SendAsync("UserTyping", fromUser, toUser);
+                }
+            }
+        }
+    }
+
 }

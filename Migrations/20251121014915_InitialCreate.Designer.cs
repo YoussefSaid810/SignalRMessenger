@@ -11,7 +11,7 @@ using SignalRMessenger.Data;
 namespace SignalRMessenger.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    [Migration("20251121010619_InitialCreate")]
+    [Migration("20251121014915_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
