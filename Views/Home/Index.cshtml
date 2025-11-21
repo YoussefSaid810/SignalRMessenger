@@ -5,73 +5,436 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta name="viewport" content="width=device-width" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>@ViewData["Title"]</title>
     <link rel="stylesheet" href="~/css/site.css" />
     <style>
-        body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; }
-        .container { display:flex; height: 100vh; }
-        .sidebar { width: 260px; border-right: 1px solid #ddd; padding: 12px; box-sizing: border-box; }
-        .main { flex:1; display:flex; flex-direction:column; }
-        .messages { flex:1; padding: 12px; overflow:auto; background:#f7f7f7; }
-        .input-area { padding:10px; border-top:1px solid #ddd; display:flex; gap:8px; }
-        .message { margin-bottom:10px; }
-        .message .meta { font-size:12px; color:#666; }
-        .contact { padding:8px; cursor:pointer; border-radius:6px; }
-        .contact:hover { background:#eee; }
-        .selected { background: #e6f0ff; }
+        :root {
+            --primary: #0084ff;
+            --primary-light: #e6f3ff;
+            --bg: #f0f2f5;
+            --sidebar-bg: #ffffff;
+            --chat-bg: #e5ddd5;
+            --bubble-you: #0084ff;
+            --bubble-other: #ffffff;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
+            background: var(--bg);
+        }
+
+        .chat-shell {
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: radial-gradient(circle at top left, #d0e6ff, #f0f2f5);
+        }
+
+        .chat-wrapper {
+            width: 100%;
+            max-width: 1200px;
+            height: 90vh;
+            background: #fff;
+            border-radius: 16px;
+            overflow: hidden;
+            display: flex;
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12);
+        }
+
+        /* Sidebar (left) */
+        .chat-sidebar {
+            width: 320px;
+            min-width: 260px;
+            background: var(--sidebar-bg);
+            border-right: 1px solid #e4e6eb;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 16px 18px;
+            border-bottom: 1px solid #e4e6eb;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .sidebar-title {
+            font-weight: 700;
+            font-size: 18px;
+        }
+
+        .username-box {
+            padding: 12px 16px;
+            border-bottom: 1px solid #e4e6eb;
+        }
+
+            .username-box label {
+                font-size: 12px;
+                text-transform: uppercase;
+                color: #666;
+                letter-spacing: .06em;
+            }
+
+        .username-input-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 6px;
+        }
+
+            .username-input-row input {
+                flex: 1;
+                padding: 6px 10px;
+                border-radius: 12px;
+                border: 1px solid #ccc;
+                font-size: 14px;
+                outline: none;
+            }
+
+            .username-input-row button {
+                border: none;
+                border-radius: 999px;
+                padding: 6px 12px;
+                background: var(--primary);
+                color: #fff;
+                font-size: 13px;
+                cursor: pointer;
+            }
+
+                .username-input-row button:hover {
+                    filter: brightness(0.95);
+                }
+
+        .sidebar-section-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #777;
+            padding: 8px 16px 4px 16px;
+            text-transform: uppercase;
+            letter-spacing: .05em;
+        }
+
+        .users-scroll {
+            flex: 1;
+            overflow-y: auto;
+            padding: 6px 8px 10px;
+        }
+
+        .contact {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 10px;
+            cursor: pointer;
+            border-radius: 999px;
+            transition: background 0.15s ease;
+        }
+
+            .contact:hover {
+                background: #f2f2f2;
+            }
+
+        .contact-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #74b9ff, #a29bfe);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        .contact-label {
+            font-size: 14px;
+        }
+
+        .contact.selected {
+            background: var(--primary-light);
+        }
+
+        /* Main chat area (right) */
+        .chat-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: var(--chat-bg);
+            position: relative;
+        }
+
+        .chat-header {
+            padding: 12px 16px;
+            border-bottom: 1px solid rgba(0,0,0,0.05);
+            background: #f7f8fa;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .chat-header-left {
+            display: flex;
+            flex-direction: column;
+        }
+
+        #chatTitle {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        #typingIndicator {
+            font-size: 12px;
+            color: #777;
+            min-height: 16px;
+        }
+
+        .chat-header-right {
+            font-size: 13px;
+            color: #555;
+        }
+
+        /* Messages */
+        .messages {
+            flex: 1;
+            padding: 16px;
+            overflow-y: auto;
+            /* background: url("https://i.imgur.com/1ZQZ1Zm.png"); */
+            background-size: cover;
+            position: relative;
+        }
+
+        .message-row {
+            display: flex;
+            margin-bottom: 10px;
+        }
+
+            .message-row.you {
+                justify-content: flex-end;
+            }
+
+        .message-bubble {
+            max-width: 60%;
+            border-radius: 18px;
+            padding: 8px 12px;
+            font-size: 14px;
+            line-height: 1.4;
+            position: relative;
+            box-shadow: 0 1px 1px rgba(0,0,0,0.16);
+            background: var(--bubble-other);
+        }
+
+        .message-row.you .message-bubble {
+            background: var(--bubble-you);
+            color: #fff;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message-row.other .message-bubble {
+            background: var(--bubble-other);
+            color: #111;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message-meta {
+            font-size: 11px;
+            opacity: 0.8;
+            margin-top: 2px;
+        }
+
+        /* We keep the original structure, but style via JS-added HTML */
+        .message {
+            margin-bottom: 10px;
+        }
+
+            .message .meta {
+                font-size: 11px;
+                color: rgba(0,0,0,0.55);
+            }
+
+        /* Input area */
+        .input-area {
+            padding: 10px 12px;
+            border-top: 1px solid rgba(0,0,0,0.05);
+            background: #f7f8fa;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+            .input-area input[type="text"] {
+                flex: 1;
+                padding: 8px 12px;
+                border-radius: 20px;
+                border: 1px solid #ccc;
+                outline: none;
+                font-size: 14px;
+            }
+
+            .input-area button {
+                border: none;
+                border-radius: 999px;
+                padding: 7px 12px;
+                font-size: 13px;
+                cursor: pointer;
+                display: flex;
+                align-items: center;
+                gap: 4px;
+            }
+
+        .contact-main {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .contact-top-row {
+            font-size: 14px;
+        }
+
+        .contact-status-row {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11px;
+            color: #4caf50; /* green for online */
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 999px;
+            background: #4caf50;
+        }
+
+        .status-text {
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .contact-main {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .contact-top-row {
+            font-size: 14px;
+        }
+
+        .contact-last-message {
+            font-size: 12px;
+            color: #777;
+            max-width: 180px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .delivery-indicator {
+            margin-left: 6px;
+            font-size: 11px;
+            color: #555; /* delivered */
+        }
+
+            .delivery-indicator.seen {
+                color: #4caf50; /* green when seen */
+            }
+
+
+        #btnSend {
+            background: var(--primary);
+            color: #fff;
+        }
+
+        #btnSendPrivate {
+            background: #e4e6eb;
+            color: #111;
+        }
+
+        #btnSend:hover {
+            filter: brightness(0.95);
+        }
+
+        #btnSendPrivate:hover {
+            background: #d8dadf;
+        }
+
+
+        /* Responsive */
+        @@media (max-width: 900px) {
+            .chat-wrapper
+
+        {
+            height: 100vh;
+            border-radius: 0;
+        }
+
+        }
+
+        @@media (max-width: 720px) {
+            .chat-sidebar
+
+        {
+            display: none; /* for simplicity, hide sidebar on very small screens */
+        }
+
+        }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="sidebar">
-            <h3>SignalR Messenger</h3>
+    <div class="chat-shell">
+        <div class="chat-wrapper">
+            <!-- Sidebar -->
+            <div class="chat-sidebar">
+                <div class="sidebar-header">
+                    <div class="sidebar-title">SignalR Messenger</div>
+                </div>
 
-            <div>
-                <label>Your name</label><br />
-                <input type="text" id="usernameInput" placeholder="Enter a display name" />
-                <button id="btnRegister">Set</button>
-            </div>
-
-            <hr />
-
-            <div>
-                <strong>Users</strong>
-                <div id="usersList"></div>
-            </div>
-
-            <hr />
-
-            <div>
-                <strong>Public Chat</strong>
-                <div id="publicInfo">Public room (everyone)</div>
-            </div>
-        </div>
-
-        <div class="main">
-            <div style="padding: 12px; border-bottom:1px solid #ddd;">
-                <div style="display:flex; justify-content:space-between;">
-                    <div>
-                        <strong id="chatTitle">Public Chat</strong><br />
-                        <small id="typingIndicator" style="color:#777;"></small>
+                <div class="username-box">
+                    <label>Your Name</label>
+                    <div class="username-input-row">
+                        <input type="text" id="usernameInput" placeholder="Enter a display name" />
+                        <button id="btnRegister">Set</button>
                     </div>
-                    <div>
-                        <span id="currentUserLabel">Not registered</span>
-                    </div>
+                </div>
+
+                <div class="sidebar-section-title">Conversations</div>
+                <div class="users-scroll" id="usersList">
+                    <!-- filled by JS -->
                 </div>
             </div>
 
+            <!-- Main chat -->
+            <div class="chat-main">
+                <div class="chat-header">
+                    <div class="chat-header-left">
+                        <span id="chatTitle">Public Chat</span>
+                        <span id="typingIndicator"></span>
+                    </div>
+                    <div class="chat-header-right">
+                        <span id="currentUserLabel">Not registered</span>
+                    </div>
+                </div>
 
-            <div class="messages" id="messagesList"></div>
+                <div class="messages" id="messagesList">
+                    <!-- messages rendered here -->
+                </div>
 
-            <div class="input-area">
-                <input type="text" id="messageInput" style="flex:1" placeholder="Type a message..." />
-                <button id="btnSend">Send</button>
-                <button id="btnSendPrivate" title="Send to selected user">Send Private</button>
+                <div class="input-area">
+                    <input type="text" id="messageInput" placeholder="Type a message..." />
+                    <button id="btnSend">Send</button>
+                    <button id="btnSendPrivate" title="Send to selected user">
+                        Private
+                    </button>
+                </div>
             </div>
         </div>
     </div>
 
+    <!-- SignalR client -->
     <script src="https://cdn.jsdelivr.net/npm/@@microsoft/signalr@latest/dist/browser/signalr.min.js"></script>
     <script src="~/js/chat.js"></script>
 </body>

@@ -1,185 +1,223 @@
+using System.Collections.Concurrent;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
 using SignalRMessenger.Data;
 using SignalRMessenger.Models;
-using Microsoft.EntityFrameworkCore;
-using System.Collections.Concurrent;
 
-namespace SignalRMessenger.Hubs;
-
-public class ChatHub : Hub
+namespace SignalRMessenger.Hubs
 {
-    private readonly ApplicationDbContext _db;
-
-    // username -> connectionIds
-    private static readonly ConcurrentDictionary<string, ConcurrentBag<string>> _users =
-        new(StringComparer.OrdinalIgnoreCase);
-
-    private static readonly ConcurrentDictionary<string, string> _connections =
-        new();
-
-    public ChatHub(ApplicationDbContext db)
+    public class ChatHub : Hub
     {
-        _db = db;
-    }
+        private readonly ApplicationDbContext _db;
 
-    public override async Task OnDisconnectedAsync(Exception? exception)
-    {
-        if (_connections.TryRemove(Context.ConnectionId, out var username))
+        // username -> connectionIds
+        private static readonly ConcurrentDictionary<string, ConcurrentBag<string>> _users =
+            new(StringComparer.OrdinalIgnoreCase);
+
+        // connectionId -> username
+        private static readonly ConcurrentDictionary<string, string> _connections =
+            new();
+
+        public ChatHub(ApplicationDbContext db)
         {
-            if (_users.TryGetValue(username, out var bag))
+            _db = db;
+        }
+
+        // -------- helper: always send fresh user list --------
+        private Task BroadcastUserList()
+        {
+            var users = _users.Keys.OrderBy(u => u).ToList();
+            return Clients.All.SendAsync("UserList", users);
+        }
+
+        // -------- disconnect handling --------
+        public override async Task OnDisconnectedAsync(Exception? exception)
+        {
+            // Which user was this connection?
+            if (_connections.TryRemove(Context.ConnectionId, out var username))
             {
-                var remaining = new ConcurrentBag<string>(bag.Where(id => id != Context.ConnectionId));
-                if (remaining.IsEmpty)
+                if (_users.TryGetValue(username, out var bag))
                 {
-                    _users.TryRemove(username, out _);
-                    await Clients.All.SendAsync("UserLeft", username);
+                    // Remove this connection ID from the bag
+                    var remaining = new ConcurrentBag<string>(bag.Where(id => id != Context.ConnectionId));
+
+                    if (remaining.IsEmpty)
+                    {
+                        // No more open connections -> user is really offline
+                        _users.TryRemove(username, out _);
+                        await Clients.All.SendAsync("UserLeft", username);
+                    }
+                    else
+                    {
+                        _users[username] = remaining;
+                    }
                 }
-                else
-                {
-                    _users[username] = remaining;
-                }
+
+                // ?? Always send updated list after any disconnect
+                await BroadcastUserList();
             }
+
+            await base.OnDisconnectedAsync(exception);
         }
 
-        await base.OnDisconnectedAsync(exception);
-    }
-
-    public async Task Register(string username)
-    {
-        if (string.IsNullOrWhiteSpace(username)) return;
-
-        _connections[Context.ConnectionId] = username;
-        var bag = _users.GetOrAdd(username, _ => new ConcurrentBag<string>());
-        bag.Add(Context.ConnectionId);
-
-        await Clients.Caller.SendAsync("Registered", username);
-
-        var users = _users.Keys.OrderBy(u => u).ToList();
-        await Clients.All.SendAsync("UserList", users);
-
-        await Clients.Others.SendAsync("UserJoined", username);
-    }
-
-    public async Task SendPublicMessage(string user, string message)
-    {
-        if (string.IsNullOrWhiteSpace(message)) return;
-        var now = DateTime.UtcNow;
-
-        // save to DB as public (ToUser = null)
-        var msg = new Message
+        // -------- register user name --------
+        public async Task Register(string username)
         {
-            FromUser = user,
-            ToUser = null,
-            Body = message,
-            Timestamp = now,
-            IsPrivate = false
-        };
-        _db.Messages.Add(msg);
-        await _db.SaveChangesAsync();
+            if (string.IsNullOrWhiteSpace(username)) return;
 
-        await Clients.All.SendAsync("ReceivePublicMessage", user, message, now.ToString("o"));
-    }
+            _connections[Context.ConnectionId] = username;
 
-    public async Task SendPrivateMessage(string fromUser, string toUser, string message)
-    {
-        if (string.IsNullOrWhiteSpace(toUser) || string.IsNullOrWhiteSpace(message)) return;
-        var now = DateTime.UtcNow;
+            var bag = _users.GetOrAdd(username, _ => new ConcurrentBag<string>());
+            bag.Add(Context.ConnectionId);
 
-        var msg = new Message
+            // confirm to caller
+            await Clients.Caller.SendAsync("Registered", username);
+
+            // notify others someone joined
+            await Clients.Others.SendAsync("UserJoined", username);
+
+            // ?? send full list to everyone
+            await BroadcastUserList();
+        }
+
+        // -------- public message --------
+        public async Task SendPublicMessage(string user, string message)
         {
-            FromUser = fromUser,
-            ToUser = toUser,
-            Body = message,
-            Timestamp = now,
-            IsPrivate = true
-        };
-        _db.Messages.Add(msg);
-        await _db.SaveChangesAsync();
+            if (string.IsNullOrWhiteSpace(message)) return;
+            var now = DateTime.UtcNow;
 
-        // send back to caller
-        await Clients.Caller.SendAsync("ReceivePrivateMessage", fromUser, toUser, message, now.ToString("o"));
-
-        if (_users.TryGetValue(toUser, out var connections))
-        {
-            foreach (var connId in connections)
+            var msg = new Message
             {
-                await Clients.Client(connId).SendAsync("ReceivePrivateMessage", fromUser, toUser, message, now.ToString("o"));
-            }
+                FromUser = user,
+                ToUser = null,
+                Body = message,
+                Timestamp = now,
+                IsPrivate = false
+            };
+            _db.Messages.Add(msg);
+            await _db.SaveChangesAsync();
+
+            await Clients.All.SendAsync("ReceivePublicMessage", user, message, now.ToString("o"));
         }
-    }
 
-    // Returns last 50 messages for a conversation.
-    // If withUser is null or empty, returns last 50 public messages.
-    public async Task<List<MessageDto>> GetConversationHistory(string? withUser)
-    {
-        // determine caller username
-        _connections.TryGetValue(Context.ConnectionId, out var caller);
-
-        if (string.IsNullOrWhiteSpace(withUser))
+        // -------- private message --------
+        public async Task SendPrivateMessage(string fromUser, string toUser, string message)
         {
-            // public messages
-            var publicMsgs = await _db.Messages
-                .Where(m => !m.IsPrivate)
-                .OrderByDescending(m => m.Timestamp)
-                .Take(50)
-                .OrderBy(m => m.Timestamp)
-                .Select(m => new MessageDto {
-                    FromUser = m.FromUser,
-                    ToUser = m.ToUser,
-                    Body = m.Body,
-                    Timestamp = m.Timestamp
-                })
-                .ToListAsync();
+            if (string.IsNullOrWhiteSpace(toUser) || string.IsNullOrWhiteSpace(message)) return;
+            var now = DateTime.UtcNow;
 
-            return publicMsgs;
-        }
-        else
-        {
-            // private between caller and withUser
-            var other = withUser;
-            var msgs = await _db.Messages
-                .Where(m => m.IsPrivate &&
-                           ((m.FromUser == caller && m.ToUser == other) ||
-                            (m.FromUser == other && m.ToUser == caller)))
-                .OrderByDescending(m => m.Timestamp)
-                .Take(50)
-                .OrderBy(m => m.Timestamp)
-                .Select(m => new MessageDto {
-                    FromUser = m.FromUser,
-                    ToUser = m.ToUser,
-                    Body = m.Body,
-                    Timestamp = m.Timestamp
-                })
-                .ToListAsync();
+            var msg = new Message
+            {
+                FromUser = fromUser,
+                ToUser = toUser,
+                Body = message,
+                Timestamp = now,
+                IsPrivate = true
+            };
+            _db.Messages.Add(msg);
+            await _db.SaveChangesAsync();
 
-            return msgs;
-        }
-    }
-    public async Task Typing(string? toUser)
-    {
-        // who is typing?
-        _connections.TryGetValue(Context.ConnectionId, out var fromUser);
-        if (string.IsNullOrWhiteSpace(fromUser))
-            return;
+            // back to sender
+            await Clients.Caller.SendAsync("ReceivePrivateMessage", fromUser, toUser, message, now.ToString("o"));
 
-        // null/empty => public chat
-        if (string.IsNullOrWhiteSpace(toUser))
-        {
-            // notify everyone except the typer
-            await Clients.Others.SendAsync("UserTyping", fromUser, null);
-        }
-        else
-        {
-            // private typing notification only to the target user
+            // to receiver
             if (_users.TryGetValue(toUser, out var connections))
             {
                 foreach (var connId in connections)
                 {
                     await Clients.Client(connId)
-                                 .SendAsync("UserTyping", fromUser, toUser);
+                                 .SendAsync("ReceivePrivateMessage", fromUser, toUser, message, now.ToString("o"));
                 }
             }
         }
-    }
 
+        // -------- typing indicator --------
+        public async Task Typing(string? toUser)
+        {
+            _connections.TryGetValue(Context.ConnectionId, out var fromUser);
+            if (string.IsNullOrWhiteSpace(fromUser))
+                return;
+
+            if (string.IsNullOrWhiteSpace(toUser))
+            {
+                // public chat typing
+                await Clients.Others.SendAsync("UserTyping", fromUser, null);
+            }
+            else
+            {
+                // private chat typing
+                if (_users.TryGetValue(toUser, out var connections))
+                {
+                    foreach (var connId in connections)
+                    {
+                        await Clients.Client(connId)
+                                     .SendAsync("UserTyping", fromUser, toUser);
+                    }
+                }
+            }
+        }
+
+        // -------- history --------
+        public async Task<List<MessageDto>> GetConversationHistory(string? withUser)
+        {
+            _connections.TryGetValue(Context.ConnectionId, out var caller);
+
+            if (string.IsNullOrWhiteSpace(withUser))
+            {
+                var publicMsgs = await _db.Messages
+                    .Where(m => !m.IsPrivate)
+                    .OrderByDescending(m => m.Timestamp)
+                    .Take(50)
+                    .OrderBy(m => m.Timestamp)
+                    .Select(m => new MessageDto
+                    {
+                        FromUser = m.FromUser,
+                        ToUser = m.ToUser,
+                        Body = m.Body,
+                        Timestamp = m.Timestamp
+                    })
+                    .ToListAsync();
+
+                return publicMsgs;
+            }
+            else
+            {
+                var msgs = await _db.Messages
+                    .Where(m =>
+                        m.IsPrivate &&
+                        ((m.FromUser == caller && m.ToUser == withUser) ||
+                         (m.FromUser == withUser && m.ToUser == caller)))
+                    .OrderByDescending(m => m.Timestamp)
+                    .Take(50)
+                    .OrderBy(m => m.Timestamp)
+                    .Select(m => new MessageDto
+                    {
+                        FromUser = m.FromUser,
+                        ToUser = m.ToUser,
+                        Body = m.Body,
+                        Timestamp = m.Timestamp
+                    })
+                    .ToListAsync();
+
+                return msgs;
+            }
+        }
+        public async Task MarkConversationSeen(string otherUser)
+        {
+            // who is calling?
+            _connections.TryGetValue(Context.ConnectionId, out var caller);
+            if (string.IsNullOrWhiteSpace(caller) || string.IsNullOrWhiteSpace(otherUser))
+                return;
+
+            // notify the other user that caller has seen their messages
+            if (_users.TryGetValue(otherUser, out var connections))
+            {
+                foreach (var connId in connections)
+                {
+                    await Clients.Client(connId).SendAsync("ConversationSeen", caller);
+                }
+            }
+        }
+
+    }
 }
