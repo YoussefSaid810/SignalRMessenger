@@ -1,0 +1,76 @@
+@{
+    ViewData["Title"] = "SignalR Messenger";
+}
+
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport" content="width=device-width" />
+    <title>@ViewData["Title"]</title>
+    <link rel="stylesheet" href="~/css/site.css" />
+    <style>
+        body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; }
+        .container { display:flex; height: 100vh; }
+        .sidebar { width: 260px; border-right: 1px solid #ddd; padding: 12px; box-sizing: border-box; }
+        .main { flex:1; display:flex; flex-direction:column; }
+        .messages { flex:1; padding: 12px; overflow:auto; background:#f7f7f7; }
+        .input-area { padding:10px; border-top:1px solid #ddd; display:flex; gap:8px; }
+        .message { margin-bottom:10px; }
+        .message .meta { font-size:12px; color:#666; }
+        .contact { padding:8px; cursor:pointer; border-radius:6px; }
+        .contact:hover { background:#eee; }
+        .selected { background: #e6f0ff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <h3>SignalR Messenger</h3>
+
+            <div>
+                <label>Your name</label><br />
+                <input type="text" id="usernameInput" placeholder="Enter a display name" />
+                <button id="btnRegister">Set</button>
+            </div>
+
+            <hr />
+
+            <div>
+                <strong>Users</strong>
+                <div id="usersList"></div>
+            </div>
+
+            <hr />
+
+            <div>
+                <strong>Public Chat</strong>
+                <div id="publicInfo">Public room (everyone)</div>
+            </div>
+        </div>
+
+        <div class="main">
+            <div style="padding: 12px; border-bottom:1px solid #ddd;">
+                <div style="display:flex; justify-content:space-between;">
+                    <div>
+                        <strong id="chatTitle">Public Chat</strong>
+                    </div>
+                    <div>
+                        <span id="currentUserLabel">Not registered</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="messages" id="messagesList"></div>
+
+            <div class="input-area">
+                <input type="text" id="messageInput" style="flex:1" placeholder="Type a message..." />
+                <button id="btnSend">Send</button>
+                <button id="btnSendPrivate" title="Send to selected user">Send Private</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@@microsoft/signalr@latest/dist/browser/signalr.min.js"></script>
+    <script src="~/js/chat.js"></script>
+</body>
+</html>
